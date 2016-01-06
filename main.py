@@ -4,7 +4,7 @@ import skimage.data as skidat
 import matplotlib.pyplot as plt
 import numpy as np
 
-import MarkovRandomField
+import markov_random_field as mrf
 
 #- - - - - - - - - - - - - - - - - - -
 
@@ -32,5 +32,5 @@ seeds[seeds_2] = 2
 scale = 0.5  # scaling parameter for resizing the image
 alpha = 1  # parameter for weighting the smoothness term (pairwise potentials)
 beta = 1  # parameter for weighting the data term (unary potentials)
-mrf = MarkovRandomField.MarkovRandomField(img, seeds, alpha=alpha, beta=beta, scale=scale)
+mrf = mrf.MarkovRandomField(img, seeds, alpha=alpha, beta=beta, scale=scale)
 mrf.run()
