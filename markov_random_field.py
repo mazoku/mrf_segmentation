@@ -27,9 +27,15 @@ class MarkovRandomField:
             seeds = np.expand_dims(seeds, 0)
 
         self.img_orig = img  # original variable
-        self.img = None  # working variable - i.e. resized data etc.
+        # self.img = None  # working variable - i.e. resized data etc.
+        self.img = img.copy()  # working variable - i.e. resized data etc.
         self.seeds_orig = seeds  # original variable
-        self.seeds = seeds  # working variable - i.e. resized data etc.
+        self.seeds = seeds.copy()  # working variable - i.e. resized data etc.
+        if mask == None:
+            self.mask_orig = np.ones_like(self.img)
+        else:
+            self.mask_orig = mask
+        self.mask = self.mask_orig.copy()
 
         self.n_slices, self.n_rows, self.n_cols = self.img_orig.shape
         self.n_seeds = (self.seeds > 0).sum()
@@ -42,11 +48,6 @@ class MarkovRandomField:
         self.unaries = None  # unary term = data term
         self.pairwise = None  # pairwise term = smoothness term
         self.labels = None  # labels of the final segmentation
-
-        if mask == None:
-            self.mask = np.ones_like(self.img)
-        else:
-            self.mask = mask
 
         self.models = list()  # list of intensity models used for segmentation
 
@@ -79,16 +80,31 @@ class MarkovRandomField:
         else:
             raise ValueError('Wrong unaries shape. Either input the right shape (same as input image) or allow resizing.')
 
+    def show_slice(self, slice_id, show_now=True):
+        plt.figure()
+        plt.subplot(221), plt.imshow(self.img_orig[slice_id, :, :], 'gray', interpolation='nearest'), plt.title('input image')
+        plt.subplot(222), plt.imshow(self.seeds_orig[slice_id, :, :], interpolation='nearest'), plt.title('seeds')
+        plt.subplot(223), plt.imshow(self.labels[slice_id, :, :], interpolation='nearest'), plt.title('segmentation')
+        plt.subplot(224), plt.imshow(skiseg.mark_boundaries(self.img[slice_id, :, :].astype(np.uint8), self.labels[slice_id, :, :]),
+                                     interpolation='nearest'), plt.title('segmentation')
+        if show_now:
+            plt.show()
+
+
     def run(self):
         #----  rescaling  ----
         if self.scale != 0:
-            for i, (im, seeds, mask) in enumerate(zip(self.img_orig, self.seeds_orig, self.mask_orig)):
-                self.img[i, :, :] = cv2.resize(im, (0,0), fx=self.scale, fy=self.scale, interpolation=cv2.INTER_NEAREST)
-                self.seeds[i, :, :] = cv2.resize(self.seeds_orig, (0,0),  fx=self.scale, fy=self.scale, interpolation=cv2.INTER_NEAREST)
-        else:
-            self.img = self.img_orig
-            self.seeds = self.seeds_orig
-        self.n_rows, self.n_cols = self.img.shape
+            self.img = tools.resize3D(self.img_orig, self.scale, sliceId=0)
+            self.seeds = tools.resize3D(self.seeds_orig, self.scale, sliceId=0)
+            self.mask = tools.resize3D(self.mask_orig, self.scale, sliceId=0)
+            # for i, (im, seeds, mask) in enumerate(zip(self.img_orig, self.seeds_orig, self.mask_orig)):
+            #     self.img[i, :, :] = cv2.resize(im, (0,0), fx=self.scale, fy=self.scale, interpolation=cv2.INTER_NEAREST)
+            #     self.seeds[i, :, :] = cv2.resize(seeds, (0,0),  fx=self.scale, fy=self.scale, interpolation=cv2.INTER_NEAREST)
+            #     self.mask[i, :, :] = cv2.resize(mask, (0,0),  fx=self.scale, fy=self.scale, interpolation=cv2.INTER_NEAREST)
+        # else:
+        #     self.img = self.img_orig
+        #     self.seeds = self.seeds_orig
+        self.n_slices, self.n_rows, self.n_cols = self.img.shape
 
         #----  calculating intensity models  ----
         if self.unaries is None:
@@ -141,25 +157,27 @@ class MarkovRandomField:
 
         #----  zooming to the original size  ----
         if self.scale != 0:
-            self.labels = cv2.resize(self.labels, (0,0),  fx=1. / self.scale, fy= 1. / self.scale, interpolation=cv2.INTER_NEAREST)
+            # self.labels_orig = cv2.resize(self.labels, (0,0),  fx=1. / self.scale, fy= 1. / self.scale, interpolation=cv2.INTER_NEAREST)
+            self.labels_orig = tools.resize3D(self.labels, 1. / self.scale, sliceId=0)
 
         print '----------'
         print 'segmentation done'
 
-        plt.figure()
-        plt.subplot(221), plt.imshow(self.img_orig, 'gray', interpolation='nearest'), plt.title('input image')
-        plt.subplot(222), plt.imshow(self.seeds_orig, interpolation='nearest')
-        # plt.hold(True)
-        # seeds_v = np.nonzero(self.seeds)
-        # for i in range(len(seeds_v[0])):
-        #     seed = (seeds_v[0][i], seeds_v[1][i])
-        #     if self.seeds[seed]
-        #
-        # plt.plot
-        plt.title('seeds')
-        plt.subplot(223), plt.imshow(self.labels, interpolation='nearest'), plt.title('segmentation')
-        plt.subplot(224), plt.imshow(skiseg.mark_boundaries(self.img_orig, self.labels), interpolation='nearest'), plt.title('segmentation')
-        plt.show()
+        self.show_slice(0)
+        # plt.figure()
+        # plt.subplot(221), plt.imshow(self.img_orig[0, :, :], 'gray', interpolation='nearest'), plt.title('input image')
+        # plt.subplot(222), plt.imshow(self.seeds_orig[0, :, :], interpolation='nearest')
+        # # plt.hold(True)
+        # # seeds_v = np.nonzero(self.seeds)
+        # # for i in range(len(seeds_v[0])):
+        # #     seed = (seeds_v[0][i], seeds_v[1][i])
+        # #     if self.seeds[seed]
+        # #
+        # # plt.plot
+        # plt.title('seeds')
+        # plt.subplot(223), plt.imshow(self.labels, interpolation='nearest'), plt.title('segmentation')
+        # plt.subplot(224), plt.imshow(skiseg.mark_boundaries(self.img_orig, self.labels), interpolation='nearest'), plt.title('segmentation')
+        # plt.show()
 
 
 #-----------------------------------------------------------------------------------------------------
