@@ -243,6 +243,8 @@ class MarkovRandomField:
         return unaries.astype(np.int32)
 
     def set_unaries(self, unaries, resize=False):
+        if (unaries[...:0].shape == self.img_orig.shape).all():
+            unaries = np.dstack((x.reshape(-1, 1) for x in unaries))
         # if (self.img_orig.shape == unaries.shape).all():
         #     self.unaries = unaries
         # elif resize:
