@@ -1,24 +1,24 @@
 __author__ = 'tomas'
 
 import numpy as np
-import scipy.stats as scista
 import matplotlib.pyplot as plt
-import skimage.data as skidat
-
-import skimage.segmentation as skiseg
-
-import pygco
 
 import cv2
+import skimage.data as skidat
+import skimage.segmentation as skiseg
+import skimage.exposure as skiexp
+
+import pygco
+import scipy.stats as scista
 
 import sys
-sys.path.   append('../imtools/')
+sys.path.append('../imtools/')
 from imtools import tools
 
 
 class MarkovRandomField:
 
-    def __init__(self, img, seeds=None, mask=None, alpha=1, beta=1, scale=0):
+    def __init__(self, img, seeds=None, n_objects=2, mask=None, alpha=1, beta=1, scale=0, models_estim=None):
         if img.ndim == 2:
             img = np.expand_dims(img, 0)
         if mask is not None and mask.ndim == 2:
@@ -43,7 +43,10 @@ class MarkovRandomField:
         self.alpha = alpha
         self.beta = beta
         self.scale = scale
-        self.n_objects = self.seeds.max()
+        if seeds is not None:
+            self.n_objects = self.seeds.max()
+        else:
+            self.n_objects = n_objects
 
         self.unaries = None  # unary term = data term
         self.pairwise = None  # pairwise term = smoothness term
@@ -51,7 +54,109 @@ class MarkovRandomField:
 
         self.models = list()  # list of intensity models used for segmentation
 
-    def calc_intensity_models(self):
+        if models_estim is None:
+            if seeds is not None:
+                self.models_estim = 'seeds'
+            else:
+                self.models_estim = 'n_objects'
+        elif models_estim == 'hydohy':
+            self.n_objects = 3
+            self.models_estim = models_estim
+
+    def estimate_dominant_pdf(self, data, mask, params):
+        perc = params['perc']
+        k_std_l = params['k_std_h']
+        simple_estim = params['healthy_simple_estim']
+
+        ints = data[np.nonzero(mask)]
+        hist, bins = skiexp.histogram(ints, nbins=256)
+        if simple_estim:
+            mu, sigma = scista.norm.fit(ints)
+        else:
+            ints = data[np.nonzero(mask)]
+
+            n_pts = mask.sum()
+            perc_in = n_pts * perc / 100
+
+            peak_idx = np.argmax(hist)
+            n_in = hist[peak_idx]
+            win_width = 0
+
+            while n_in < perc_in:
+                win_width += 1
+                n_in = hist[peak_idx - win_width:peak_idx + win_width].sum()
+
+            idx_start = bins[peak_idx - win_width]
+            idx_end = bins[peak_idx + win_width]
+            inners_m = np.logical_and(ints > idx_start, ints < idx_end)
+            inners = ints[np.nonzero(inners_m)]
+
+            # liver pdf -------------
+            mu = bins[peak_idx]
+            sigma = k_std_l * np.std(inners)
+
+        mu = int(mu)
+        sigma = int(sigma)
+        rv = scista.norm(mu, sigma)
+
+        return rv
+
+    def estimate_outlier_pdf(self, data, mask, rv_healthy, outlier_type, params):
+        prob_w = params['prob_w']
+
+        probs = rv_healthy.pdf(data) * mask
+
+        max_prob = rv_healthy.pdf(rv_healthy.mean())
+
+        prob_t = prob_w * max_prob
+
+        ints_out_m = probs < prob_t * mask
+
+        ints_out = data[np.nonzero(ints_out_m)]
+
+        if outlier_type == 'hypo':
+            ints = ints_out[np.nonzero(ints_out < rv_healthy.mean())]
+        elif outlier_type == 'hyper':
+            ints = ints_out[np.nonzero(ints_out > rv_healthy.mean())]
+        else:
+            print 'Wrong outlier specification.'
+            return
+
+        mu, sigma = scista.norm.fit(ints)
+
+        mu = int(mu)
+        sigma = int(sigma)
+        rv = scista.norm(mu, sigma)
+
+        return rv
+
+    def calc_models(self, data, mask, params):
+        if self.models_estim == 'seeds':
+            models = self.calc_seeds_models()
+        elif self.models_estim == 'hydohy':
+            models = self.calc_hydohy_models()
+        else:
+            raise Erro
+
+        # print 'calculating intensity models...'
+        # # liver pdf ------------
+        # rv_domin = self.estimate_dominant_pdf(data, mask, params)
+        # print '\tdominant pdf: mu = ', rv_domin.mean(), ', sigma = ', rv_domin.std()
+        # # hypodense pdf ------------
+        # rv_hypo = self.estimate_outlier_pdf(data, mask, rv_domin, 'hypo', params)
+        # print '\thypo pdf: mu = ', rv_hypo.mean(), ', sigma = ', rv_hypo.std()
+        # # hyperdense pdf ------------
+        # rv_hyper = self.estimate_outlier_pdf(data, mask, rv_domin, 'hyper', params)
+        # print '\thyper pdf: mu = ', rv_hyper.mean(), ', sigma = ', rv_hyper.std()
+        #
+        # models = dict()
+        # models['domin'] = rv_domin
+        # models['hypo'] = rv_hypo
+        # models['hyper'] = rv_hyper
+
+        return models
+
+    def calc_seeds_models(self):
         models = list()
         for i in range(1, self.n_objects + 1):
             pts = self.img[np.nonzero(self.seeds == i)]
@@ -65,20 +170,87 @@ class MarkovRandomField:
 
         return models
 
+    def calc_hydohy_models(self):
+        # print 'calculating intensity models...'
+        # liver pdf ------------
+        # rv_domin = self.estimate_dominant_pdf(data, mask, params)
+        rv_domin = self.estimate_dominant_pdf()
+        # print '\tdominant pdf: mu = ', rv_domin.mean(), ', sigma = ', rv_domin.std()
+
+        # hypodense pdf ------------
+        # rv_hypo = self.estimate_outlier_pdf(data, mask, rv_domin, 'hypo', params)
+        rv_hypo = self.estimate_outlier_pdf('hypo')
+        # print '\thypo pdf: mu = ', rv_hypo.mean(), ', sigma = ', rv_hypo.std()
+
+        # hyperdense pdf ------------
+        # rv_hyper = self.estimate_outlier_pdf(data, mask, rv_domin, 'hyper', params)
+        rv_hyper = self.estimate_outlier_pdf('hyper')
+        # print '\thyper pdf: mu = ', rv_hyper.mean(), ', sigma = ', rv_hyper.std()
+
+        models = dict()
+        models['domin'] = rv_domin
+        models['hypo'] = rv_hypo
+        models['hyper'] = rv_hyper
+        models = [rv_hypo, rv_domin, rv_hyper]
+
+        return models
+
+    # def get_unaries_hydohy(self, data, mask, models, unaries_as_cdf=False):
+    #     rv_domin = models['domin']
+    #     rv_hyper = models['hyper']
+    #     rv_hypo = models['hypo']
+    #     # mu_heal = models['mu_heal']
+    #     mu_heal = rv_domin.mean()
+    #
+    #     # if params['erode_mask']:
+    #     #     if data.ndim == 3:
+    #     #         mask = tools.eroding3D(mask, skimor.disk(5), slicewise=True)
+    #     #     else:
+    #     #         mask = skimor.binary_erosion(mask, np.ones((5, 5)))
+    #
+    #     unaries_healthy = - rv_domin.logpdf(data) * mask
+    #     if unaries_as_cdf:
+    #         unaries_hyper = - np.log(rv_hyper.cdf(data) * rv_domin.pdf(mu_heal)) * mask
+    #         # removing zeros with second lowest value so the log(0) wouldn't throw a warning -
+    #         tmp = 1 - rv_hypo.cdf(data)
+    #         values = np.unique(tmp)
+    #         tmp = np.where(tmp == 0, values[1], tmp)
+    #         #-
+    #         unaries_hypo = - np.log(tmp * rv_domin.pdf(mu_heal)) * mask
+    #         unaries_hypo = np.where(np.isnan(unaries_hypo), 0, unaries_hypo)
+    #     else:
+    #         unaries_hyper = - rv_hyper.logpdf(data) * mask
+    #         unaries_hypo = - rv_hypo.logpdf(data) * mask
+    #
+    #     unaries = np.dstack((unaries_hypo.reshape(-1, 1), unaries_healthy.reshape(-1, 1), unaries_hyper.reshape(-1, 1)))
+    #     unaries = unaries.astype(np.int32)
+    #
+    #     return unaries
+
     def get_unaries(self):
-        unaries = np.zeros((self.n_rows, self.n_cols, self.n_objects))
-        for i in range(self.n_objects):
-            unaries[:, :, i] = - self.models[i].logpdf(self.img)
+        # if self.models_estim == 'seeds':
+        #     unaries = np.zeros((self.n_rows, self.n_cols, self.n_objects))
+        #     if self.models is None:
+        #         self.models = self.calc_intensity_models()
+        #     for i in range(self.n_objects):
+        #         unaries[:, :, i] = - self.models[i].logpdf(self.img)
+        # elif self.models_estim == 'hydohy':
+        #     unaries = self.get_unaries_hydohy()
+
+        unaries_l = [- model.logpdf(self.img) for model in self.models]
+        unaries = np.dstack((x.reshape(-1, 1) for x in unaries_l))
 
         return unaries.astype(np.int32)
 
     def set_unaries(self, unaries, resize=False):
-        if (self.img_orig.shape == unaries.shape).all():
-            self.unaries = unaries
-        elif resize:
-            self.unaries = cv2.resize(unaries, self.img_orig.shape)
-        else:
-            raise ValueError('Wrong unaries shape. Either input the right shape (same as input image) or allow resizing.')
+        # if (self.img_orig.shape == unaries.shape).all():
+        #     self.unaries = unaries
+        # elif resize:
+        #     self.unaries = cv2.resize(unaries, self.img_orig.shape)
+        # else:
+        #     raise ValueError('Wrong unaries shape. Either input the right shape (1, n_pts, n_objs) or allow resizing.')
+        self.unaries = unaries
+        self.n_objects = unaries.shape[2]
 
     def show_slice(self, slice_id, show_now=True):
         plt.figure()
@@ -89,7 +261,6 @@ class MarkovRandomField:
                                      interpolation='nearest'), plt.title('segmentation')
         if show_now:
             plt.show()
-
 
     def run(self):
         #----  rescaling  ----
