@@ -1,5 +1,9 @@
 __author__ = 'tomas'
 
+import sys
+sys.path.append('../../imtools/')
+from imtools import tools
+
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -10,10 +14,7 @@ import skimage.exposure as skiexp
 
 import pygco
 import scipy.stats as scista
-
-import sys
-sys.path.append('../imtools/')
-from imtools import tools
+import ConfigParser
 
 
 class MarkovRandomField:
@@ -63,19 +64,62 @@ class MarkovRandomField:
             self.n_objects = 3
             self.models_estim = models_estim
 
-    def estimate_dominant_pdf(self, data, mask, params):
-        perc = params['perc']
-        k_std_l = params['k_std_h']
-        simple_estim = params['healthy_simple_estim']
+    def load_parameters(self, config_path='config.ini'):
+        # load parameters
+        self.params = {
+            'win_l': 50,
+            'win_w': 350,
+            'alpha': 4,
+            'beta': 1,
+            'zoom': 0,
+            'scale': 0.25,
+            'perc': 30,
+            'k_std_h': 3,
+            'domin_simple_estim': 0,
+            'prob_w': 0.0001,
+            'unaries_as_cdf': 0,
+            'bgd_label': 0,
+            'hypo_label': 1,
+            'domin_label': 2,
+            'hyper_label': 3
+            # 'voxel_size': (1, 1, 1)
+        }
 
-        ints = data[np.nonzero(mask)]
+        config = ConfigParser.ConfigParser()
+        config.read(config_path)
+
+        params = dict()
+
+        # an automatic way
+        for section in config.sections():
+            for option in config.options(section):
+                try:
+                    params[option] = config.getint(section, option)
+                except ValueError:
+                    try:
+                        params[option] = config.getfloat(section, option)
+                    except ValueError:
+                        if option == 'voxel_size':
+                            str = config.get(section, option)
+                            params[option] = np.array(map(int, str.split(', ')))
+                        else:
+                            params[option] = config.get(section, option)
+
+        self.params.update(self.load_parameters())
+
+    def estimate_dominant_pdf(self):
+        perc = self.params['perc']
+        k_std_l = self.params['k_std_h']
+        simple_estim = self.params['domin_simple_estim']
+
+        ints = self.img[np.nonzero(self.mask)]
         hist, bins = skiexp.histogram(ints, nbins=256)
         if simple_estim:
             mu, sigma = scista.norm.fit(ints)
         else:
-            ints = data[np.nonzero(mask)]
+            ints = self.img[np.nonzero(self.mask)]
 
-            n_pts = mask.sum()
+            n_pts = self.mask.sum()
             perc_in = n_pts * perc / 100
 
             peak_idx = np.argmax(hist)
@@ -101,23 +145,23 @@ class MarkovRandomField:
 
         return rv
 
-    def estimate_outlier_pdf(self, data, mask, rv_healthy, outlier_type, params):
-        prob_w = params['prob_w']
+    def estimate_outlier_pdf(self, rv_domin, outlier_type):
+        prob_w = self.params['prob_w']
 
-        probs = rv_healthy.pdf(data) * mask
+        probs = rv_domin.pdf(self.img) * self.mask
 
-        max_prob = rv_healthy.pdf(rv_healthy.mean())
+        max_prob = rv_domin.pdf(rv_domin.mean())
 
         prob_t = prob_w * max_prob
 
-        ints_out_m = probs < prob_t * mask
+        ints_out_m = probs < prob_t * self.mask
 
-        ints_out = data[np.nonzero(ints_out_m)]
+        ints_out = self.img[np.nonzero(ints_out_m)]
 
         if outlier_type == 'hypo':
-            ints = ints_out[np.nonzero(ints_out < rv_healthy.mean())]
+            ints = ints_out[np.nonzero(ints_out < rv_domin.mean())]
         elif outlier_type == 'hyper':
-            ints = ints_out[np.nonzero(ints_out > rv_healthy.mean())]
+            ints = ints_out[np.nonzero(ints_out > rv_domin.mean())]
         else:
             print 'Wrong outlier specification.'
             return
@@ -130,29 +174,13 @@ class MarkovRandomField:
 
         return rv
 
-    def calc_models(self, data, mask, params):
+    def calc_models(self):
         if self.models_estim == 'seeds':
             models = self.calc_seeds_models()
         elif self.models_estim == 'hydohy':
             models = self.calc_hydohy_models()
         else:
-            raise Erro
-
-        # print 'calculating intensity models...'
-        # # liver pdf ------------
-        # rv_domin = self.estimate_dominant_pdf(data, mask, params)
-        # print '\tdominant pdf: mu = ', rv_domin.mean(), ', sigma = ', rv_domin.std()
-        # # hypodense pdf ------------
-        # rv_hypo = self.estimate_outlier_pdf(data, mask, rv_domin, 'hypo', params)
-        # print '\thypo pdf: mu = ', rv_hypo.mean(), ', sigma = ', rv_hypo.std()
-        # # hyperdense pdf ------------
-        # rv_hyper = self.estimate_outlier_pdf(data, mask, rv_domin, 'hyper', params)
-        # print '\thyper pdf: mu = ', rv_hyper.mean(), ', sigma = ', rv_hyper.std()
-        #
-        # models = dict()
-        # models['domin'] = rv_domin
-        # models['hypo'] = rv_hypo
-        # models['hyper'] = rv_hyper
+            raise ValueError('Wrong type of model estimation mode.')
 
         return models
 
@@ -172,87 +200,45 @@ class MarkovRandomField:
 
     def calc_hydohy_models(self):
         # print 'calculating intensity models...'
-        # liver pdf ------------
-        # rv_domin = self.estimate_dominant_pdf(data, mask, params)
+        # dominant class pdf ------------
         rv_domin = self.estimate_dominant_pdf()
-        # print '\tdominant pdf: mu = ', rv_domin.mean(), ', sigma = ', rv_domin.std()
+        print '\tdominant pdf: mu = ', rv_domin.mean(), ', sigma = ', rv_domin.std()
 
-        # hypodense pdf ------------
-        # rv_hypo = self.estimate_outlier_pdf(data, mask, rv_domin, 'hypo', params)
+        # hypodense class pdf ------------
         rv_hypo = self.estimate_outlier_pdf('hypo')
-        # print '\thypo pdf: mu = ', rv_hypo.mean(), ', sigma = ', rv_hypo.std()
+        print '\thypo pdf: mu = ', rv_hypo.mean(), ', sigma = ', rv_hypo.std()
 
-        # hyperdense pdf ------------
-        # rv_hyper = self.estimate_outlier_pdf(data, mask, rv_domin, 'hyper', params)
+        # hyperdense class pdf ------------
         rv_hyper = self.estimate_outlier_pdf('hyper')
-        # print '\thyper pdf: mu = ', rv_hyper.mean(), ', sigma = ', rv_hyper.std()
+        print '\thyper pdf: mu = ', rv_hyper.mean(), ', sigma = ', rv_hyper.std()
 
-        models = dict()
-        models['domin'] = rv_domin
-        models['hypo'] = rv_hypo
-        models['hyper'] = rv_hyper
         models = [rv_hypo, rv_domin, rv_hyper]
 
         return models
 
-    # def get_unaries_hydohy(self, data, mask, models, unaries_as_cdf=False):
-    #     rv_domin = models['domin']
-    #     rv_hyper = models['hyper']
-    #     rv_hypo = models['hypo']
-    #     # mu_heal = models['mu_heal']
-    #     mu_heal = rv_domin.mean()
-    #
-    #     # if params['erode_mask']:
-    #     #     if data.ndim == 3:
-    #     #         mask = tools.eroding3D(mask, skimor.disk(5), slicewise=True)
-    #     #     else:
-    #     #         mask = skimor.binary_erosion(mask, np.ones((5, 5)))
-    #
-    #     unaries_healthy = - rv_domin.logpdf(data) * mask
-    #     if unaries_as_cdf:
-    #         unaries_hyper = - np.log(rv_hyper.cdf(data) * rv_domin.pdf(mu_heal)) * mask
-    #         # removing zeros with second lowest value so the log(0) wouldn't throw a warning -
-    #         tmp = 1 - rv_hypo.cdf(data)
-    #         values = np.unique(tmp)
-    #         tmp = np.where(tmp == 0, values[1], tmp)
-    #         #-
-    #         unaries_hypo = - np.log(tmp * rv_domin.pdf(mu_heal)) * mask
-    #         unaries_hypo = np.where(np.isnan(unaries_hypo), 0, unaries_hypo)
-    #     else:
-    #         unaries_hyper = - rv_hyper.logpdf(data) * mask
-    #         unaries_hypo = - rv_hypo.logpdf(data) * mask
-    #
-    #     unaries = np.dstack((unaries_hypo.reshape(-1, 1), unaries_healthy.reshape(-1, 1), unaries_hyper.reshape(-1, 1)))
-    #     unaries = unaries.astype(np.int32)
-    #
-    #     return unaries
-
     def get_unaries(self):
-        # if self.models_estim == 'seeds':
-        #     unaries = np.zeros((self.n_rows, self.n_cols, self.n_objects))
-        #     if self.models is None:
-        #         self.models = self.calc_intensity_models()
-        #     for i in range(self.n_objects):
-        #         unaries[:, :, i] = - self.models[i].logpdf(self.img)
-        # elif self.models_estim == 'hydohy':
-        #     unaries = self.get_unaries_hydohy()
-
         unaries_l = [- model.logpdf(self.img) for model in self.models]
         unaries = np.dstack((x.reshape(-1, 1) for x in unaries_l))
 
         return unaries.astype(np.int32)
 
     def set_unaries(self, unaries, resize=False):
-        if (unaries[...:0].shape == self.img_orig.shape).all():
-            unaries = np.dstack((x.reshape(-1, 1) for x in unaries))
-        # if (self.img_orig.shape == unaries.shape).all():
-        #     self.unaries = unaries
-        # elif resize:
-        #     self.unaries = cv2.resize(unaries, self.img_orig.shape)
-        # else:
-        #     raise ValueError('Wrong unaries shape. Either input the right shape (1, n_pts, n_objs) or allow resizing.')
-        self.unaries = unaries
+        '''
+        Set unary term.
+        :param unaries: list of unary terms - item per object, item has to be an ndarray
+        :param resize: if to resize to match the image (scaled down by factor self.scale) shape ot raise an error
+        :return:
+        '''
+        if (unaries[0].shape != self.img.shape).all():
+            if resize:
+                unaries = [cv2.resize(x, self.img.shape) for x in unaries]
+            else:
+                raise ValueError('Wrong unaries shape. Either input the right shape (1, n_pts, n_objs) or allow resizing.')
+
+        unaries = np.dstack((x.reshape(-1, 1) for x in unaries))
+
         self.n_objects = unaries.shape[2]
+        self.unaries = unaries
 
     def show_slice(self, slice_id, show_now=True):
         plt.figure()
@@ -282,7 +268,8 @@ class MarkovRandomField:
         #----  calculating intensity models  ----
         if self.unaries is None:
             print 'calculating intensity models ...',
-            self.models = self.calc_intensity_models()
+            # self.models = self.calc_intensity_models()
+            self.models = self.calc_models()
             print 'done'
 
         #----  creating unaries  ----
