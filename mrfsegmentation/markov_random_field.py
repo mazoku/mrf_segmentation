@@ -31,7 +31,10 @@ class MarkovRandomField:
         # self.img = None  # working variable - i.e. resized data etc.
         self.img = img.copy()  # working variable - i.e. resized data etc.
         self.seeds_orig = seeds  # original variable
-        self.seeds = seeds.copy()  # working variable - i.e. resized data etc.
+        if seeds is not None:
+            self.seeds = seeds.copy()  # working variable - i.e. resized data etc.
+        else:
+            self.seeds = None
         if mask == None:
             self.mask_orig = np.ones_like(self.img)
         else:
@@ -39,7 +42,10 @@ class MarkovRandomField:
         self.mask = self.mask_orig.copy()
 
         self.n_slices, self.n_rows, self.n_cols = self.img_orig.shape
-        self.n_seeds = (self.seeds > 0).sum()
+        if seeds is not None:
+            self.n_seeds = (seeds > 0).sum()
+        else:
+            self.n_seeds = 0
 
         self.alpha = alpha
         self.beta = beta
@@ -53,7 +59,7 @@ class MarkovRandomField:
         self.pairwise = None  # pairwise term = smoothness term
         self.labels = None  # labels of the final segmentation
 
-        self.models = list()  # list of intensity models used for segmentation
+        self.models = None  # list of intensity models used for segmentation
 
         if models_estim is None:
             if seeds is not None:
@@ -64,9 +70,14 @@ class MarkovRandomField:
             self.n_objects = 3
             self.models_estim = models_estim
 
+        self.params = self.load_parameters()
+        params = {'alpha': alpha, 'beta': beta, 'scale': scale}
+        self.params.update(params)
+
+
     def load_parameters(self, config_path='config.ini'):
         # load parameters
-        self.params = {
+        params_default = {
             'win_l': 50,
             'win_w': 350,
             'alpha': 4,
@@ -105,7 +116,10 @@ class MarkovRandomField:
                         else:
                             params[option] = config.get(section, option)
 
-        self.params.update(self.load_parameters())
+        # self.params.update(self.load_parameters())
+        params_default.update(params)
+
+        return params_default
 
     def estimate_dominant_pdf(self):
         perc = self.params['perc']
@@ -205,11 +219,11 @@ class MarkovRandomField:
         print '\tdominant pdf: mu = ', rv_domin.mean(), ', sigma = ', rv_domin.std()
 
         # hypodense class pdf ------------
-        rv_hypo = self.estimate_outlier_pdf('hypo')
+        rv_hypo = self.estimate_outlier_pdf(rv_domin, 'hypo')
         print '\thypo pdf: mu = ', rv_hypo.mean(), ', sigma = ', rv_hypo.std()
 
         # hyperdense class pdf ------------
-        rv_hyper = self.estimate_outlier_pdf('hyper')
+        rv_hyper = self.estimate_outlier_pdf(rv_domin, 'hyper')
         print '\thyper pdf: mu = ', rv_hyper.mean(), ', sigma = ', rv_hyper.std()
 
         models = [rv_hypo, rv_domin, rv_hyper]
@@ -217,6 +231,8 @@ class MarkovRandomField:
         return models
 
     def get_unaries(self):
+        if self.models is None:
+            self.models = self.calc_models()
         unaries_l = [- model.logpdf(self.img) for model in self.models]
         unaries = np.dstack((x.reshape(-1, 1) for x in unaries_l))
 
@@ -323,7 +339,8 @@ class MarkovRandomField:
         print '----------'
         print 'segmentation done'
 
-        self.show_slice(0)
+        # self.show_slice(0)
+
         # plt.figure()
         # plt.subplot(221), plt.imshow(self.img_orig[0, :, :], 'gray', interpolation='nearest'), plt.title('input image')
         # plt.subplot(222), plt.imshow(self.seeds_orig[0, :, :], interpolation='nearest')
@@ -338,6 +355,8 @@ class MarkovRandomField:
         # plt.subplot(223), plt.imshow(self.labels, interpolation='nearest'), plt.title('segmentation')
         # plt.subplot(224), plt.imshow(skiseg.mark_boundaries(self.img_orig, self.labels), interpolation='nearest'), plt.title('segmentation')
         # plt.show()
+
+        return self.labels_orig
 
 
 #-----------------------------------------------------------------------------------------------------
