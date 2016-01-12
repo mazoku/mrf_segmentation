@@ -35,7 +35,7 @@ class MarkovRandomField:
             self.seeds = seeds.copy()  # working variable - i.e. resized data etc.
         else:
             self.seeds = None
-        if mask == None:
+        if mask is None:
             self.mask_orig = np.ones_like(self.img)
         else:
             self.mask_orig = mask
@@ -245,15 +245,15 @@ class MarkovRandomField:
         :param resize: if to resize to match the image (scaled down by factor self.scale) shape ot raise an error
         :return:
         '''
-        if (unaries[0].shape != self.img.shape).all():
-            if resize:
-                unaries = [cv2.resize(x, self.img.shape) for x in unaries]
-            else:
-                raise ValueError('Wrong unaries shape. Either input the right shape (1, n_pts, n_objs) or allow resizing.')
+        if (unaries.shape[0] != np.prod(self.img.shape)):
+        #     if resize:
+        #         unaries = [cv2.resize(x, self.img.shape) for x in unaries]
+        #     else:
+            raise ValueError('Wrong unaries shape. Either input the right shape (1, n_pts, n_objs) or allow resizing.')
 
         unaries = np.dstack((x.reshape(-1, 1) for x in unaries))
 
-        self.n_objects = unaries.shape[2]
+        self.n_objects = unaries.shape[0]
         self.unaries = unaries
 
     def show_slice(self, slice_id, show_now=True):
@@ -266,9 +266,9 @@ class MarkovRandomField:
         if show_now:
             plt.show()
 
-    def run(self):
+    def run(self, resize=True):
         #----  rescaling  ----
-        if self.scale != 0:
+        if resize and self.scale != 0:
             self.img = tools.resize3D(self.img_orig, self.scale, sliceId=0)
             self.seeds = tools.resize3D(self.seeds_orig, self.scale, sliceId=0)
             self.mask = tools.resize3D(self.mask_orig, self.scale, sliceId=0)
@@ -309,11 +309,11 @@ class MarkovRandomField:
         # vert = np.c_[inds[:-1, :].ravel(), inds[1:, :].ravel()]
         # self.edges = np.vstack([horz, vert]).astype(np.int32)
         inds = np.arange(self.img.size).reshape(self.img.shape)
-        if img.ndim == 2:
+        if self.img.ndim == 2:
             horz = np.c_[inds[:, :-1].ravel(), inds[:, 1:].ravel()]
             vert = np.c_[inds[:-1, :].ravel(), inds[1:, :].ravel()]
             self.edges = np.vstack([horz, vert]).astype(np.int32)
-        elif img.ndim == 3:
+        elif self.img.ndim == 3:
             horz = np.c_[inds[:, :, :-1].ravel(), inds[:, :, 1:].ravel()]
             vert = np.c_[inds[:, :-1, :].ravel(), inds[:, 1:, :].ravel()]
             dept = np.c_[inds[:-1, :, :].ravel(), inds[1:, :, :].ravel()]
@@ -332,9 +332,11 @@ class MarkovRandomField:
         print 'done'
 
         #----  zooming to the original size  ----
-        if self.scale != 0:
+        if resize and self.scale != 0:
             # self.labels_orig = cv2.resize(self.labels, (0,0),  fx=1. / self.scale, fy= 1. / self.scale, interpolation=cv2.INTER_NEAREST)
             self.labels_orig = tools.resize3D(self.labels, 1. / self.scale, sliceId=0)
+        else:
+            self.labels_orig = self.labels
 
         print '----------'
         print 'segmentation done'
@@ -387,4 +389,28 @@ if __name__ == '__main__':
     alpha = 1  # parameter for weighting the smoothness term (pairwise potentials)
     beta = 1  # parameter for weighting the data term (unary potentials)
     mrf = MarkovRandomField(img, seeds, alpha=alpha, beta=beta, scale=scale)
-    mrf.run()
+    unaries = mrf.get_unaries()
+    mrf.set_unaries(unaries)
+
+    plt.figure()
+    plt.subplot(131), plt.imshow(img, 'gray')
+    plt.subplot(132), plt.imshow(unaries[:, :, 0].reshape(img.shape), 'gray', interpolation='nearest')
+    plt.subplot(133), plt.imshow(unaries[:, :, 1].reshape(img.shape), 'gray', interpolation='nearest')
+    plt.show()
+
+    labels = mrf.run()
+
+    plt.figure()
+    plt.subplot(221), plt.imshow(img, 'gray', interpolation='nearest'), plt.title('input image')
+    plt.subplot(222), plt.imshow(seeds, interpolation='nearest')
+    # plt.hold(True)
+    # seeds_v = np.nonzero(self.seeds)
+    # for i in range(len(seeds_v[0])):
+    #     seed = (seeds_v[0][i], seeds_v[1][i])
+    #     if self.seeds[seed]
+    #
+    # plt.plot
+    plt.title('seeds')
+    plt.subplot(223), plt.imshow(labels[0, :, :], interpolation='nearest'), plt.title('segmentation')
+    plt.subplot(224), plt.imshow(skiseg.mark_boundaries(img, labels[0, :, :]), interpolation='nearest'), plt.title('segmentation')
+    plt.show()
