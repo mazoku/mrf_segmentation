@@ -230,11 +230,60 @@ class MarkovRandomField:
 
         return models
 
+    def plot_models(self, nbins=256, show_now=True):
+        plt.figure()
+        x = np.arange(self.img.min(), self.img.max())  # artificial x-axis
+
+        hist, bins = skiexp.histogram(self.img, nbins=nbins)
+        plt.plot(bins, hist, 'k')
+        plt.hold(True)
+        # if self.rv_heal is not None and self.rv_hypo is not None and self.rv_hyper is not None:
+        if self.models is not None:
+            if self.params['unaries_as_cdf'] and self.models_estim == 'hydohy':
+                domin_p = self.models[1].pdf(x)
+                hypo_p = (1 - self.models[0].cdf(x))
+                hypo_p *= domin_p.max() / hypo_p.max()
+                hyper_p = self.models[2].cdf(x)
+                hyper_p *= domin_p.max() / hyper_p.max()
+                probs = [hypo_p, domin_p, hyper_p]
+            else:
+                probs = []
+                for m in self.models:
+                    probs.append(m.pdf(x))
+            y_max = max([p.max() for p in probs])
+            fac = hist.max() / y_max
+
+            colors = 'rgbcmy' * 10
+            for i, p in enumerate(probs):
+                plt.plot(x, fac * p, colors[i], linewidth=2)
+
+            # plt.figure()
+            # for i, p in enumerate(probs):
+            #     plt.subplot(3, 1, i+1), plt.plot(x, p, colors[i], linewidth=2)
+            if show_now:
+                plt.show()
+
     def get_unaries(self):
         if self.models is None:
             self.models = self.calc_models()
-        unaries_l = [- model.logpdf(self.img) for model in self.models]
+        if self.models_estim == 'hydohy' and self.params['unaries_as_cdf']:
+            # unaries_dom = - self.models[1].logpdf(self.img * rv_heal.pdf(mu_heal)) * self.mask
+            unaries_dom = - self.models[1].logpdf(self.img) * self.mask
+            unaries_hyper = - np.log(self.models[2].cdf(self.img) * self.models[0].pdf(self.models[0].mean())) * self.mask
+            # removing zeros with second lowest value so the log(0) wouldn't throw a warning -
+            tmp = 1 - self.models[0].cdf(self.img)
+            values = np.unique(tmp)
+            tmp = np.where(tmp == 0, values[1], tmp)
+            #-
+            # unaries_hypo = - np.log(tmp * rv_heal.pdf(mu_heal)) * mask
+            unaries_hypo = - np.log(tmp * self.models[0].pdf(self.models[0].mean())) * self.mask
+            unaries_hypo = np.where(np.isnan(unaries_hypo), 0, unaries_hypo)
+            unaries_l = [unaries_hypo, unaries_dom, unaries_hyper]
+        else:
+            unaries_l = [- model.logpdf(self.img) for model in self.models]
+
         unaries = np.dstack((x.reshape(-1, 1) for x in unaries_l))
+
 
         return unaries.astype(np.int32)
 
