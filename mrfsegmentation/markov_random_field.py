@@ -147,6 +147,15 @@ class MarkovRandomField:
             idx_start = bins[peak_idx - win_width]
             idx_end = bins[peak_idx + win_width]
             inners_m = np.logical_and(ints > idx_start, ints < idx_end)
+
+            dom_m = np.zeros_like(self.mask)
+            dom_m[np.nonzero(self.mask)] = inners_m
+
+            # plt.figure()
+            # plt.subplot(121), plt.imshow(self.img[0, :, :], 'gray')
+            # plt.subplot(122), plt.imshow(dom_m[0, :, :], 'gray', interpolation='nearest')
+            # plt.show()
+
             inners = ints[np.nonzero(inners_m)]
 
             # liver pdf -------------
@@ -269,14 +278,16 @@ class MarkovRandomField:
         if self.models_estim == 'hydohy' and self.params['unaries_as_cdf']:
             # unaries_dom = - self.models[1].logpdf(self.img * rv_heal.pdf(mu_heal)) * self.mask
             unaries_dom = - self.models[1].logpdf(self.img) * self.mask
-            unaries_hyper = - np.log(self.models[2].cdf(self.img) * self.models[0].pdf(self.models[0].mean())) * self.mask
+
+            # unaries_hyper = - np.log(self.models[2].cdf(self.img) * self.models[1].pdf(self.models[1].mean())) * self.mask
+            unaries_hyper = - self.models[2].logcdf(self.img)# * self.models[1].pdf(self.models[1].mean()) * self.mask
+
             # removing zeros with second lowest value so the log(0) wouldn't throw a warning -
             tmp = 1 - self.models[0].cdf(self.img)
             values = np.unique(tmp)
             tmp = np.where(tmp == 0, values[1], tmp)
-            #-
             # unaries_hypo = - np.log(tmp * rv_heal.pdf(mu_heal)) * mask
-            unaries_hypo = - np.log(tmp * self.models[0].pdf(self.models[0].mean())) * self.mask
+            unaries_hypo = - np.log(tmp * self.models[1].pdf(self.models[1].mean())) * self.mask
             unaries_hypo = np.where(np.isnan(unaries_hypo), 0, unaries_hypo)
             unaries_l = [unaries_hypo, unaries_dom, unaries_hyper]
         else:
