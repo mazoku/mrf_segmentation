@@ -131,7 +131,7 @@ class MarkovRandomField:
         if simple_estim:
             mu, sigma = scista.norm.fit(ints)
         else:
-            ints = self.img[np.nonzero(self.mask)]
+            # ints = self.img[np.nonzero(self.mask)]
 
             n_pts = self.mask.sum()
             perc_in = n_pts * perc / 100
@@ -148,8 +148,8 @@ class MarkovRandomField:
             idx_end = bins[peak_idx + win_width]
             inners_m = np.logical_and(ints > idx_start, ints < idx_end)
 
-            dom_m = np.zeros_like(self.mask)
-            dom_m[np.nonzero(self.mask)] = inners_m
+            # dom_m = np.zeros_like(self.mask)
+            # dom_m[np.nonzero(self.mask)] = inners_m
 
             # plt.figure()
             # plt.subplot(121), plt.imshow(self.img[0, :, :], 'gray')
@@ -163,12 +163,13 @@ class MarkovRandomField:
             sigma = k_std_l * np.std(inners)
 
         mu = int(mu)
-        sigma = int(sigma)
+        sigma = int(round(sigma))
         rv = scista.norm(mu, sigma)
 
         return rv
 
     def estimate_outlier_pdf(self, rv_domin, outlier_type):
+        print 'estimate_outlier_pdf:', outlier_type
         prob_w = self.params['prob_w']
 
         probs = rv_domin.pdf(self.img) * self.mask
@@ -177,17 +178,36 @@ class MarkovRandomField:
 
         prob_t = prob_w * max_prob
 
-        ints_out_m = probs < prob_t * self.mask
+        ints_out_m = (probs < prob_t) * self.mask
 
         ints_out = self.img[np.nonzero(ints_out_m)]
 
         if outlier_type == 'hypo':
             ints = ints_out[np.nonzero(ints_out < rv_domin.mean())]
+
+            ints_idxs = np.nonzero(ints_out < rv_domin.mean())
+            ints_out_idxs = np.nonzero(ints_out_m)
+            ints_im = np.zeros_like(self.img)
+            indcs = np.ravel_multi_index(ints_out_idxs, self.mask.shape)[ints_idxs[0]]
+            ints_im[np.unravel_index(indcs, self.mask.shape)] = ints
         elif outlier_type == 'hyper':
             ints = ints_out[np.nonzero(ints_out > rv_domin.mean())]
+
+            ints_idxs = np.nonzero(ints_out > rv_domin.mean())
+            ints_out_idxs = np.nonzero(ints_out_m)
+            ints_im = np.zeros_like(self.img)
+            indcs = np.ravel_multi_index(ints_out_idxs, self.mask.shape)[ints_idxs[0]]
+            ints_im[np.unravel_index(indcs, self.mask.shape)] = ints
         else:
             print 'Wrong outlier specification.'
             return
+
+        # plt.figure()
+        # plt.subplot(221), plt.imshow(self.img[0, :, :], 'gray', interpolation='nearest')
+        # plt.subplot(222), plt.imshow(probs[0, :, :], 'gray', interpolation='nearest'), plt.title('domin probs')
+        # plt.subplot(223), plt.imshow(ints_out_m[0, :, :], 'gray', interpolation='nearest'), plt.title('outlier mask')
+        # plt.subplot(224), plt.imshow(ints_im[0, :, :], 'gray', interpolation='nearest'), plt.title(outlier_type)
+        # plt.show()
 
         mu, sigma = scista.norm.fit(ints)
 
@@ -280,7 +300,8 @@ class MarkovRandomField:
             unaries_dom = - self.models[1].logpdf(self.img) * self.mask
 
             # unaries_hyper = - np.log(self.models[2].cdf(self.img) * self.models[1].pdf(self.models[1].mean())) * self.mask
-            unaries_hyper = - self.models[2].logcdf(self.img)# * self.models[1].pdf(self.models[1].mean()) * self.mask
+            # unaries_hyper = - self.models[2].logcdf(self.img)# * self.models[1].pdf(self.models[1].mean()) * self.mask
+            unaries_hyper = - self.models[2].logcdf(self.img) * self.mask# * self.models[1].pdf(self.models[1].mean()) * self.mask
 
             # removing zeros with second lowest value so the log(0) wouldn't throw a warning -
             tmp = 1 - self.models[0].cdf(self.img)
@@ -290,13 +311,38 @@ class MarkovRandomField:
             unaries_hypo = - np.log(tmp * self.models[1].pdf(self.models[1].mean())) * self.mask
             unaries_hypo = np.where(np.isnan(unaries_hypo), 0, unaries_hypo)
             unaries_l = [unaries_hypo, unaries_dom, unaries_hyper]
+
+
+            hypo = scista.norm(self.models[0].mean() + 0, self.models[0].std())
+            self.models[0] = hypo
+            hyper = scista.norm(self.models[2].mean() + 0, self.models[2].std())
+            self.models[2] = hyper
+            x = np.arange(0, 255, 1)
+            y_dom = self.models[1].pdf(x)
+            y_hyper = self.models[2].cdf(x) * y_dom.max()
+            y_hypo = (1 - self.models[0].cdf(x)) * y_dom.max()
+
+            plt.figure()
+            plt.plot(x, y_hypo, 'b-')
+            # plt.hold(True)
+            plt.plot(x, y_dom, 'g-')
+            plt.plot(x, y_hyper, 'r-')
+            # plt.show()
+
+            prob_dom = self.models[1].pdf(self.img) * self.mask
+            prob_hyper = self.models[2].cdf(self.img)
+            prob_hyper *= prob_dom.max() / prob_hyper.max() * self.mask
+            prob_hypo = (1 - self.models[0].cdf(self.img))
+            prob_hypo *= prob_dom.max() / prob_hypo.max() * self.mask
+            un_probs = [prob_hypo, prob_dom, prob_hyper]
         else:
             unaries_l = [- model.logpdf(self.img) for model in self.models]
+            un_probs = [model.pdf(self.img) for model in self.models]
 
         unaries = np.dstack((x.reshape(-1, 1) for x in unaries_l))
+        un_probs = np.dstack((x.reshape(-1, 1) for x in un_probs))
 
-
-        return unaries.astype(np.int32)
+        return unaries.astype(np.int32), un_probs
 
     def set_unaries(self, unaries, resize=False):
         '''
