@@ -188,8 +188,10 @@ class MarkovRandomField:
                 mu, sigma = scista.norm.fit(ints)
             if self.params['unaries_as_cdf']:
                 cm = ColorModel(mu + self.params['hypo_mean_offset'], sigma * self.params['k_std_hypo'], type='sf', max_val=max_prob)
+                # cm = ColorModel(mu + self.params['hypo_mean_offset'], sigma * self.params['k_std_hypo'], type='sf')
             else:
                 cm = ColorModel(mu + self.params['hypo_mean_offset'], sigma, type='pdf', max_val=max_prob)
+                # cm = ColorModel(mu + self.params['hypo_mean_offset'], sigma, type='pdf')
             # y1 = scista.beta(1, 4).pdf(x)
         elif outlier_type == 'hyper':
             ints = ints_out[np.nonzero(ints_out > rv_domin.mean)]
@@ -200,8 +202,10 @@ class MarkovRandomField:
                 mu, sigma = scista.norm.fit(ints)
             if self.params['unaries_as_cdf']:
                 cm = ColorModel(mu, sigma, type='cdf', max_val=max_prob)
+                # cm = ColorModel(mu, sigma, type='cdf')
             else:
                 cm = ColorModel(mu, sigma, type='pdf', max_val=max_prob)
+                # cm = ColorModel(mu, sigma, type='pdf')
         else:
             print 'Wrong outlier specification.'
             return
