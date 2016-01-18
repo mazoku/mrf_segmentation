@@ -87,14 +87,16 @@ class MarkovRandomField:
             'zoom': 0,
             'scale': 0.25,
             'perc': 30,
-            'k_std_h': 3,
+            'k_std_dom': 5,
+            'k_std_hypo': 1,
             'domin_simple_estim': 0,
             'prob_w': 0.0001,
             'unaries_as_cdf': 0,
             'bgd_label': 0,
             'hypo_label': 1,
             'domin_label': 2,
-            'hyper_label': 3
+            'hyper_label': 3,
+            'hypo_mean_offset': -80,
             # 'voxel_size': (1, 1, 1)
         }
 
@@ -125,7 +127,7 @@ class MarkovRandomField:
 
     def estimate_dominant_pdf(self):
         perc = self.params['perc']
-        k_std_l = self.params['k_std_h']
+        k_std = self.params['k_std_dom']
         simple_estim = self.params['domin_simple_estim']
 
         ints = self.img[np.nonzero(self.mask)]
@@ -133,8 +135,6 @@ class MarkovRandomField:
         if simple_estim:
             mu, sigma = scista.norm.fit(ints)
         else:
-            # ints = self.img[np.nonzero(self.mask)]
-
             n_pts = self.mask.sum()
             perc_in = n_pts * perc / 100
 
@@ -145,38 +145,33 @@ class MarkovRandomField:
             while n_in < perc_in:
                 win_width += 1
                 n_in = hist[peak_idx - win_width:peak_idx + win_width].sum()
+                print 'win_w=%i, perc_in=%.0f, n_in=%.0f' % (win_width, perc_in, n_in)
 
             idx_start = bins[peak_idx - win_width]
             idx_end = bins[peak_idx + win_width]
             inners_m = np.logical_and(ints > idx_start, ints < idx_end)
 
-            # dom_m = np.zeros_like(self.mask)
-            # dom_m[np.nonzero(self.mask)] = inners_m
-
-            # plt.figure()
-            # plt.subplot(121), plt.imshow(self.img[0, :, :], 'gray')
-            # plt.subplot(122), plt.imshow(dom_m[0, :, :], 'gray', interpolation='nearest')
-            # plt.show()
-
             inners = ints[np.nonzero(inners_m)]
 
-            # liver pdf -------------
             mu = bins[peak_idx]
-            sigma = k_std_l * np.std(inners)
+            sigma = k_std * np.std(inners)
 
-        mu = int(mu)
-        sigma = int(round(sigma))
-        rv = scista.norm(mu, sigma)
+            # muse, sigmase = scista.norm.fit(ints)
+            # print 'simple -> (%.1f, %.2f)' % (muse, sigmase)
+            # print '  perc -> (%.1f, %.2f)' % (mu, sigma)
 
-        return rv
+        # mu = int(mu)
+        # sigma = int(round(sigma))
+        cm = ColorModel(mu, sigma, type='pdf')
+        return cm
 
     def estimate_outlier_pdf(self, rv_domin, outlier_type):
         print 'estimate_outlier_pdf:', outlier_type
         prob_w = self.params['prob_w']
 
-        probs = rv_domin.pdf(self.img) * self.mask
+        probs = rv_domin.get_val(self.img) * self.mask
 
-        max_prob = rv_domin.pdf(rv_domin.mean())
+        max_prob = rv_domin.get_val(rv_domin.mean)
 
         prob_t = prob_w * max_prob
 
@@ -184,57 +179,34 @@ class MarkovRandomField:
 
         ints_out = self.img[np.nonzero(ints_out_m)]
 
-        # if outlier_type == 'hypo':
-        #     ints = ints_out[np.nonzero(ints_out < rv_domin.mean())]
-        #
-        #     ints_idxs = np.nonzero(ints_out < rv_domin.mean())
-        #     ints_out_idxs = np.nonzero(ints_out_m)
-        #     ints_im = np.zeros_like(self.img)
-        #     indcs = np.ravel_multi_index(ints_out_idxs, self.mask.shape)[ints_idxs[0]]
-        #     ints_im[np.unravel_index(indcs, self.mask.shape)] = ints
-        # elif outlier_type == 'hyper':
-        #     ints = ints_out[np.nonzero(ints_out > rv_domin.mean())]
-        #
-        #     ints_idxs = np.nonzero(ints_out > rv_domin.mean())
-        #     ints_out_idxs = np.nonzero(ints_out_m)
-        #     ints_im = np.zeros_like(self.img)
-        #     indcs = np.ravel_multi_index(ints_out_idxs, self.mask.shape)[ints_idxs[0]]
-        #     ints_im[np.unravel_index(indcs, self.mask.shape)] = ints
-        # else:
-        #     print 'Wrong outlier specification.'
-        #     return
-        #
-        # # plt.figure()
-        # # plt.subplot(221), plt.imshow(self.img[0, :, :], 'gray', interpolation='nearest')
-        # # plt.subplot(222), plt.imshow(probs[0, :, :], 'gray', interpolation='nearest'), plt.title('domin probs')
-        # # plt.subplot(223), plt.imshow(ints_out_m[0, :, :], 'gray', interpolation='nearest'), plt.title('outlier mask')
-        # # plt.subplot(224), plt.imshow(ints_im[0, :, :], 'gray', interpolation='nearest'), plt.title(outlier_type)
-        # # plt.show()
-        #
-        # mu, sigma = scista.norm.fit(ints)
-
-        # norm shift
-        domin_max = rv_domin.pdf(rv_domin.mean())
         if outlier_type == 'hypo':
-            ints = ints_out[np.nonzero(ints_out < rv_domin.mean())]
-            mu, sigma = scista.norm.fit(ints)
-            rv = scista.norm(mu, sigma).sf
-            # rv_hypo = scista.norm(mu_fit, sigma_fit)
+            ints = ints_out[np.nonzero(ints_out < rv_domin.mean)]
+            if ints.size == 0:
+                mu = 0
+                sigma = 1
+            else:
+                mu, sigma = scista.norm.fit(ints)
+            if self.params['unaries_as_cdf']:
+                cm = ColorModel(mu + self.params['hypo_mean_offset'], sigma * self.params['k_std_hypo'], type='sf', max_val=max_prob)
+            else:
+                cm = ColorModel(mu + self.params['hypo_mean_offset'], sigma, type='pdf', max_val=max_prob)
             # y1 = scista.beta(1, 4).pdf(x)
         elif outlier_type == 'hyper':
-            ints = ints_out[np.nonzero(ints_out > rv_domin.mean())]
-            mu, sigma = scista.norm.fit(ints)
-            rv = scista.norm(mu, sigma).cdf
-            # rv_hyper = scista.norm(mu_fit, sigma_fit)
+            ints = ints_out[np.nonzero(ints_out > rv_domin.mean)]
+            if ints.size == 0:
+                mu = 255
+                sigma = 1
+            else:
+                mu, sigma = scista.norm.fit(ints)
+            if self.params['unaries_as_cdf']:
+                cm = ColorModel(mu, sigma, type='cdf', max_val=max_prob)
+            else:
+                cm = ColorModel(mu, sigma, type='pdf', max_val=max_prob)
         else:
             print 'Wrong outlier specification.'
             return
 
-        # mu = int(mu)
-        # sigma = int(sigma)
-        # rv = scista.norm(mu, sigma)
-
-        return rv
+        return cm
 
     def calc_models(self):
         if self.models_estim == 'seeds':
@@ -262,28 +234,17 @@ class MarkovRandomField:
 
     def calc_models_hydohy(self):
         # print 'calculating intensity models...'
-        # dominant class pdf ------------
+        # dominant class ------------
         rv_domin = self.estimate_dominant_pdf()
-        # print '\tdominant pdf: mu = ', rv_domin.mean(), ', sigma = ', rv_domin.std()
+        print '\tdominant pdf: mu = ', rv_domin.mean, ', sigma = ', rv_domin.sigma
 
-        # hypodense class pdf ------------
+        # hypodense class ------------
         rv_hypo = self.estimate_outlier_pdf(rv_domin, 'hypo')
-        # print '\thypo pdf: mu = ', rv_hypo.mean(), ', sigma = ', rv_hypo.std()
+        print '\thypo pdf: mu = ', rv_hypo.mean, ', sigma = ', rv_hypo.sigma
 
-        # hyperdense class pdf ------------
+        # hyperdense class ------------
         rv_hyper = self.estimate_outlier_pdf(rv_domin, 'hyper')
-        # print '\thyper pdf: mu = ', rv_hyper.mean(), ', sigma = ', rv_hyper.std()
-
-        x = np.linspace(0, 256, 100)
-        y_domin = rv_domin.pdf(x)
-        domin_max = rv_domin.pdf(rv_domin.mean())
-        y_hypo = rv_hypo(x) * domin_max
-        y_hyper = rv_hyper(x) * domin_max
-        plt.figure()
-        plt.plot(x, y_hypo, 'b-')
-        plt.plot(x, y_domin, 'g-')
-        plt.plot(x, y_hyper, 'r-')
-        plt.show()
+        print '\thyper pdf: mu = ', rv_hyper.mean, ', sigma = ', rv_hyper.sigma
 
         models = [rv_hypo, rv_domin, rv_hyper]
 
@@ -296,29 +257,14 @@ class MarkovRandomField:
         hist, bins = skiexp.histogram(self.img, nbins=nbins)
         plt.plot(bins, hist, 'k')
         plt.hold(True)
-        # if self.rv_heal is not None and self.rv_hypo is not None and self.rv_hyper is not None:
         if self.models is not None:
-            if self.params['unaries_as_cdf'] and self.models_estim == 'hydohy':
-                domin_p = self.models[1].pdf(x)
-                hypo_p = (1 - self.models[0].cdf(x))
-                hypo_p *= domin_p.max() / hypo_p.max()
-                hyper_p = self.models[2].cdf(x)
-                hyper_p *= domin_p.max() / hyper_p.max()
-                probs = [hypo_p, domin_p, hyper_p]
-            else:
-                probs = []
-                for m in self.models:
-                    probs.append(m.pdf(x))
+            probs = [cm.get_val(x) for cm in self.models]
             y_max = max([p.max() for p in probs])
             fac = hist.max() / y_max
 
             colors = 'rgbcmy' * 10
             for i, p in enumerate(probs):
                 plt.plot(x, fac * p, colors[i], linewidth=2)
-
-            # plt.figure()
-            # for i, p in enumerate(probs):
-            #     plt.subplot(3, 1, i+1), plt.plot(x, p, colors[i], linewidth=2)
             if show_now:
                 plt.show()
 
@@ -326,93 +272,33 @@ class MarkovRandomField:
         if self.models is None:
             self.models = self.calc_models()
 
-        hypo = scista.norm(self.models[0].mean() + 0, self.models[0].std())
-        self.models[0] = hypo
-        domin = scista.norm(self.models[1].mean() + 0, self.models[1].std())
-        self.models[1] = domin
-        hyper = scista.norm(self.models[2].mean() + 0, self.models[2].std())
-        self.models[2] = hyper
+        unaries_l = [x.get_log_val(self.img) for x in self.models]
 
-        if self.models_estim == 'hydohy' and self.params['unaries_as_cdf']:
-            # unaries_dom = - self.models[1].logpdf(self.img * rv_heal.pdf(mu_heal)) * self.mask
-            unaries_dom = - self.models[1].logpdf(self.img) * self.mask
-
-            # unaries_hyper = - np.log(self.models[2].cdf(self.img) * self.models[1].pdf(self.models[1].mean())) * self.mask
-            # unaries_hyper = - self.models[2].logcdf(self.img)# * self.models[1].pdf(self.models[1].mean()) * self.mask
-            unaries_hyper = - self.models[2].logcdf(self.img) * self.mask# * self.models[1].pdf(self.models[1].mean()) * self.mask
-
-            # removing zeros with second lowest value so the log(0) wouldn't throw a warning -
-            tmp = 1 - self.models[0].cdf(self.img)
-            values = np.unique(tmp)
-            tmp = np.where(tmp == 0, values[1], tmp)
-            # unaries_hypo = - np.log(tmp * rv_heal.pdf(mu_heal)) * mask
-            unaries_hypo = - np.log(tmp * self.models[1].pdf(self.models[1].mean())) * self.mask
-            unaries_hypo = np.where(np.isnan(unaries_hypo), 0, unaries_hypo)
-            unaries_l = [unaries_hypo, unaries_dom, unaries_hyper]
-
-            x = np.arange(0, 255, 1)
-            y_dom_p = self.models[1].pdf(x)
-            y_hypo_p = (1 - self.models[0].cdf(x))
-            y_hypo_p *= y_dom_p.max() / y_hypo_p.max()
-            y_hyper_p = self.models[2].cdf(x)
-            y_hyper_p *= y_dom_p.max() / y_hyper_p.max()
-
-            y_dom_u = - self.models[1].logpdf(x)
-            y_hyper_u = - self.models[2].logcdf(x)
-            tmp = 1 - self.models[0].cdf(x)
-            hypo_vals = np.sort(tmp.flatten())
-            tmp = np.where(tmp == 0, hypo_vals[1], tmp)
-            y_hypo_u = - np.log(tmp * self.models[1].pdf(self.models[1].mean()))
-            # y_hypo = np.where(np.isnan(y_hypo), 0, y_hypo)
-
-            plt.figure()
-            plt.plot(x, y_hypo_p, 'b-')
-            plt.plot(x, y_dom_p, 'g-')
-            plt.plot(x, y_hyper_p, 'r-')
-            plt.title('probabilities (cdf models)')
-
-            plt.figure()
-            plt.plot(x, y_hypo_u, 'b-')
-            plt.plot(x, y_dom_u, 'g-')
-            plt.plot(x, y_hyper_u, 'r-')
-            plt.title('unary term (cdf models)')
-
-            prob_dom = self.models[1].pdf(self.img) * self.mask
-            prob_hyper = self.models[2].cdf(self.img)
-            prob_hyper *= prob_dom.max() / prob_hyper.max() * self.mask
-            prob_hypo = (1 - self.models[0].cdf(self.img))
-            prob_hypo *= prob_dom.max() / prob_hypo.max() * self.mask
-            un_probs = [prob_hypo, prob_dom, prob_hyper]
-        else:
-            unaries_l = [- model.logpdf(self.img) for model in self.models]
-            un_probs = [model.pdf(self.img) for model in self.models]
-
-            x = np.arange(0, 255, 1)
-            y_hypo_p = self.models[0].odf(x)
-            y_dom_p = self.models[1].pdf(x)
-            y_hyper_p = self.models[2].pdf(x)
-
-            y_hypo_u = - self.models[0].logpdf(x)
-            y_dom_u = - self.models[1].logpdf(x)
-            y_hyper_u = - self.models[2].logpdf(x)
-
-            plt.figure()
-            plt.plot(x, y_hypo_p, 'b-')
-            plt.plot(x, y_dom_p, 'g-')
-            plt.plot(x, y_hyper_p, 'r-')
-            plt.title('probabilities (pdf models)')
-
-            plt.figure()
-            plt.plot(x, y_hypo_u, 'b-')
-            plt.plot(x, y_dom_u, 'g-')
-            plt.plot(x, y_hyper_u, 'r-')
-            plt.title('unary term (pdf models)')
+        un_probs_l = [x.get_val(self.img) for x in self.models]
 
         unaries = np.dstack((x.reshape(-1, 1) for x in unaries_l))
-        un_probs = np.dstack((x.reshape(-1, 1) for x in un_probs))
+        un_probs = np.dstack((x.reshape(-1, 1) for x in un_probs_l))
 
-        # probs_l = [un_probs[:, :, x].reshape(self.img.shape[1:]) * self.mask[0,:,:] for x in range(un_probs.shape[-1])]
-        # tools.arange_figs(probs_l, max_r=1, colorbar=True, same_range=False, show_now=True)
+        x = np.arange(0, 255, 1)
+        y_hypo_p = self.models[0].get_val(x)
+        y_dom_p = self.models[1].get_val(x)
+        y_hyper_p = self.models[2].get_val(x)
+
+        y_hypo_u = self.models[0].get_log_val(x)
+        y_dom_u = self.models[1].get_log_val(x)
+        y_hyper_u = self.models[2].get_log_val(x)
+
+        plt.figure()
+        plt.plot(x, y_hypo_p, 'b-')
+        plt.plot(x, y_dom_p, 'g-')
+        plt.plot(x, y_hyper_p, 'r-')
+        plt.title('probabilities (cdf models)')
+
+        plt.figure()
+        plt.plot(x, y_hypo_u, 'b-')
+        plt.plot(x, y_dom_u, 'g-')
+        plt.plot(x, y_hyper_u, 'r-')
+        plt.title('unary term (cdf models)')
 
         if ret_prob:
             return unaries.astype(np.int32), un_probs
