@@ -90,13 +90,13 @@ class MarkovRandomField:
             'k_std_dom': 5,
             'k_std_hypo': 1,
             'domin_simple_estim': 0,
-            'prob_w': 0.0001,
+            'prob_w': 0.001,
             'unaries_as_cdf': 0,
             'bgd_label': 0,
             'hypo_label': 1,
             'domin_label': 2,
             'hyper_label': 3,
-            'hypo_mean_offset': -80,
+            'hypo_mean_offset': -20,
             # 'voxel_size': (1, 1, 1)
         }
 
