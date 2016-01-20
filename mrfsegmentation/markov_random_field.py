@@ -276,38 +276,54 @@ class MarkovRandomField:
         if self.models is None:
             self.models = self.calc_models()
 
-        unaries_l = [x.get_log_val(self.img) for x in self.models]
+        # unaries_l = [x.get_log_val(self.img) for x in self.models]
+        unaries_l = [skiexp.rescale_intensity(x.get_inverse(self.img), out_range=np.uint8) for x in self.models]
+
+        plt.figure()
+        for i, u in enumerate(unaries_l):
+            plt.subplot(1, 3, i + 1)
+            plt.imshow(u.reshape(self.img.shape)[0, :, :], 'gray')
+            plt.colorbar()
+        plt.title('unary')
+        plt.show()
 
         un_probs_l = [x.get_val(self.img) for x in self.models]
 
         unaries = np.dstack((x.reshape(-1, 1) for x in unaries_l))
         un_probs = np.dstack((x.reshape(-1, 1) for x in un_probs_l))
 
-        x = np.arange(0, 255, 1)
-        y_hypo_p = self.models[0].get_val(x)
-        y_dom_p = self.models[1].get_val(x)
-        y_hyper_p = self.models[2].get_val(x)
+        # x = np.arange(0, 255, 1)
+        # y_hypo_p = self.models[0].get_val(x)
+        # y_dom_p = self.models[1].get_val(x)
+        # y_hyper_p = self.models[2].get_val(x)
+        #
+        # # y_hypo_u = self.models[0].get_log_val(x)
+        # # y_dom_u = self.models[1].get_log_val(x)
+        # # y_hyper_u = self.models[2].get_log_val(x)
+        # y_hypo_u = self.models[0].get_inverse(x)
+        # y_dom_u = self.models[1].get_inverse(x)
+        # y_hyper_u = self.models[2].get_inverse(x)
 
-        y_hypo_u = self.models[0].get_log_val(x)
-        y_dom_u = self.models[1].get_log_val(x)
-        y_hyper_u = self.models[2].get_log_val(x)
-
-        plt.figure()
-        plt.plot(x, y_hypo_p, 'b-')
-        plt.plot(x, y_dom_p, 'g-')
-        plt.plot(x, y_hyper_p, 'r-')
-        plt.title('probabilities (cdf models)')
-
-        plt.figure()
-        plt.plot(x, y_hypo_u, 'b-')
-        plt.plot(x, y_dom_u, 'g-')
-        plt.plot(x, y_hyper_u, 'r-')
-        plt.title('unary term (cdf models)')
+        # plt.figure()
+        # plt.plot(x, y_hypo_p, 'b-')
+        # plt.plot(x, y_dom_p, 'g-')
+        # plt.plot(x, y_hyper_p, 'r-')
+        # plt.xlim([0, 255])
+        # plt.title('probabilities (cdf models)')
+        #
+        # plt.figure()
+        # plt.plot(x, y_hypo_u, 'b-')
+        # plt.plot(x, y_dom_u, 'g-')
+        # plt.plot(x, y_hyper_u, 'r-')
+        # plt.xlim([0, 255])
+        # plt.title('unary term (cdf models)')
 
         if ret_prob:
             return unaries.astype(np.int32), un_probs
+            # return unaries, un_probs
         else:
             return unaries.astype(np.int32)
+            # return unaries
 
     def set_unaries(self, unaries, resize=False):
         '''

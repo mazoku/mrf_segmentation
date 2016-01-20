@@ -46,3 +46,16 @@ class ColorModel():
         y = self.get_val(x)
         y = - np.log(y)
         return y
+
+    def get_reciprocal(self, x, rescale=False):
+        y = self.get_val(x)
+        if rescale:
+            y -= y.min()
+            y /= y.max()
+        y = 1. / y
+        return y
+
+    def get_inverse(self, x):
+        y = self.get_val(x)
+        y = y.max() - y
+        return y
