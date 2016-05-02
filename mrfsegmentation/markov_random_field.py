@@ -349,10 +349,10 @@ class MarkovRandomField:
         #     else:
             raise ValueError('Wrong unaries shape. Either input the right shape (n_pts, 1, n_objs) or allow resizing.')
 
-        unaries = np.dstack((x.reshape(-1, 1) for x in unaries))
+        # unaries = np.dstack((x.reshape(-1, 1) for x in unaries))
 
-        if self.n_objects is not None and self.n_objects != unaries.shape[0]:
-            self.n_objects = unaries.shape[0]
+        if self.n_objects is not None and self.n_objects != unaries.shape[-1]:
+            self.n_objects = unaries.shape[-1]
             self.set_pairwise()
         self.unaries = unaries
 
