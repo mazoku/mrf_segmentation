@@ -21,7 +21,7 @@ from color_model import ColorModel
 
 class MarkovRandomField:
 
-    def __init__(self, img, seeds=None, n_objects=2, mask=None, alpha=1, beta=1, scale=0, models_estim=None):
+    def __init__(self, img, seeds=None, n_objects=2, mask=None, alpha=1, beta=1, scale=0, models_estim=None, verbose=True):
         if img.ndim == 2:
             img = np.expand_dims(img, 0)
         if mask is not None and mask.ndim == 2:
@@ -63,6 +63,8 @@ class MarkovRandomField:
 
         self.models = None  # list of intensity models used for segmentation
 
+        self.verbose = verbose
+
         if models_estim is None:
             if seeds is not None:
                 self.models_estim = 'seeds'
@@ -75,7 +77,6 @@ class MarkovRandomField:
         self.params = self.load_parameters()
         params = {'alpha': alpha, 'beta': beta, 'scale': scale}
         self.params.update(params)
-
 
     def load_parameters(self, config_path='config.ini'):
         # load parameters
@@ -125,6 +126,13 @@ class MarkovRandomField:
 
         return params_default
 
+    def _debug(self, msg, lineend):
+        if self.verbose:
+            if lineend:
+                print msg
+            else:
+                print msg,
+
     def estimate_dominant_pdf(self):
         perc = self.params['perc']
         k_std = self.params['k_std_dom']
@@ -145,7 +153,7 @@ class MarkovRandomField:
             while n_in < perc_in:
                 win_width += 1
                 n_in = hist[peak_idx - win_width:peak_idx + win_width].sum()
-                print 'win_w=%i, perc_in=%.0f, n_in=%.0f' % (win_width, perc_in, n_in)
+                self._debug('win_w=%i, perc_in=%.0f, n_in=%.0f' % (win_width, perc_in, n_in), True)
 
             idx_start = bins[peak_idx - win_width]
             idx_end = bins[peak_idx + win_width]
@@ -166,7 +174,7 @@ class MarkovRandomField:
         return cm
 
     def estimate_outlier_pdf(self, rv_domin, outlier_type):
-        print 'estimate_outlier_pdf:', outlier_type
+        self._debug('estimate_outlier_pdf: %s' % outlier_type, True)
         prob_w = self.params['prob_w']
 
         probs = rv_domin.get_val(self.img) * self.mask
@@ -240,15 +248,15 @@ class MarkovRandomField:
         # print 'calculating intensity models...'
         # dominant class ------------
         rv_domin = self.estimate_dominant_pdf()
-        print '\tdominant pdf: mu = ', rv_domin.mean, ', sigma = ', rv_domin.sigma
+        self._debug('\tdominant pdf: mu = %.1f, sigma = %.1f' % (rv_domin.mean, rv_domin.sigma), True)
 
         # hypodense class ------------
         rv_hypo = self.estimate_outlier_pdf(rv_domin, 'hypo')
-        print '\thypo pdf: mu = ', rv_hypo.mean, ', sigma = ', rv_hypo.sigma
+        self._debug('\thypo pdf: mu = %.1f, sigma = %.1f' % (rv_hypo.mean, rv_hypo.sigma), True)
 
         # hyperdense class ------------
         rv_hyper = self.estimate_outlier_pdf(rv_domin, 'hyper')
-        print '\thyper pdf: mu = ', rv_hyper.mean, ', sigma = ', rv_hyper.sigma
+        self._debug('\thyper pdf: mu = %.1f, sigma = %.1f' % (rv_hyper.mean,  rv_hyper.sigma), True)
 
         models = [rv_hypo, rv_domin, rv_hyper]
 
@@ -272,20 +280,23 @@ class MarkovRandomField:
             if show_now:
                 plt.show()
 
-    def get_unaries(self, ret_prob=False):
+    def get_unaries(self, ret_prob=False, show=False, show_now=True):
         if self.models is None:
             self.models = self.calc_models()
 
         # unaries_l = [x.get_log_val(self.img) for x in self.models]
         unaries_l = [skiexp.rescale_intensity(x.get_inverse(self.img), out_range=np.uint8) for x in self.models]
 
-        plt.figure()
-        for i, u in enumerate(unaries_l):
-            plt.subplot(1, 3, i + 1)
-            plt.imshow(u.reshape(self.img.shape)[0, :, :], 'gray')
-            plt.colorbar()
-        plt.title('unary')
-        plt.show()
+        if show:
+            plt.figure()
+            for i, u in enumerate(unaries_l):
+                plt.subplot(1, 3, i + 1)
+                plt.imshow(u.reshape(self.img.shape)[0, :, :], 'gray')
+                plt.colorbar()
+                plt.title('unary #%i' % (i + 1))
+
+            if show_now:
+                plt.show()
 
         un_probs_l = [x.get_val(self.img) for x in self.models]
 
@@ -336,12 +347,17 @@ class MarkovRandomField:
         #     if resize:
         #         unaries = [cv2.resize(x, self.img.shape) for x in unaries]
         #     else:
-            raise ValueError('Wrong unaries shape. Either input the right shape (1, n_pts, n_objs) or allow resizing.')
+            raise ValueError('Wrong unaries shape. Either input the right shape (n_pts, 1, n_objs) or allow resizing.')
 
         unaries = np.dstack((x.reshape(-1, 1) for x in unaries))
 
-        self.n_objects = unaries.shape[0]
+        if self.n_objects is not None and self.n_objects != unaries.shape[0]:
+            self.n_objects = unaries.shape[0]
+            self.set_pairwise()
         self.unaries = unaries
+
+    def set_pairwise(self):
+        self.pairwise = - self.alpha * np.eye(self.n_objects, dtype=np.int32)
 
     def show_slice(self, slice_id, show_now=True):
         plt.figure()
@@ -369,26 +385,28 @@ class MarkovRandomField:
         self.n_slices, self.n_rows, self.n_cols = self.img.shape
 
         #----  calculating intensity models  ----
-        if self.unaries is None:
-            print 'calculating intensity models ...',
+        # if self.unaries is None:
+        if self.models is None:
+            self._debug('calculating intensity models ...', False)
             # self.models = self.calc_intensity_models()
             self.models = self.calc_models()
-            print 'done'
+            self._debug('done', True)
 
         #----  creating unaries  ----
         if self.unaries is None:
-            print 'calculating unary potentials ...',
+            self._debug('calculating unary potentials ...', False)
             self.unaries = self.beta * self.get_unaries()
-            print 'done'
+            self._debug('done', True)
 
         #----  create potts pairwise  ----
         if self.pairwise is None:
-            print 'calculating pairwise potentials ...',
-            self.pairwise = - self.alpha * np.eye(self.n_objects, dtype=np.int32)
-            print 'done'
+            self._debug('calculating pairwise potentials ...', False)
+            # self.pairwise = - self.alpha * np.eye(self.n_objects, dtype=np.int32)
+            self.set_pairwise()
+            self._debug('done', True)
 
         #----  deriving graph edges  ----
-        print 'deriving graph edges ...',
+        self._debug('deriving graph edges ...', False)
         # use the gerneral graph algorithm
         # first, we construct the grid graph
         # inds = np.arange(self.n_rows * self.n_cols).reshape(self.img.shape)
@@ -409,14 +427,14 @@ class MarkovRandomField:
         nodes_in = np.ravel_multi_index(np.nonzero(self.mask), self.img.shape)
         rows_inds = np.in1d(self.edges, nodes_in).reshape(self.edges.shape).sum(axis=1) == 2
         self.edges = self.edges[rows_inds, :]
-        print 'done'
+        self._debug('done', True)
 
         #----  calculating graph cut  ----
-        print 'calculating graph cut ...',
+        self._debug('calculating graph cut ...', False)
         # we flatten the unaries
         result_graph = pygco.cut_from_graph(self.edges, self.unaries.reshape(-1, self.n_objects), self.pairwise)
         self.labels = result_graph.reshape(self.img.shape)
-        print 'done'
+        self._debug('done', True)
 
         #----  zooming to the original size  ----
         if resize and self.scale != 0:
@@ -425,8 +443,8 @@ class MarkovRandomField:
         else:
             self.labels_orig = self.labels
 
-        print '----------'
-        print 'segmentation done'
+        self._debug('----------', True)
+        self._debug('segmentation done', True)
 
         # self.show_slice(0)
 
