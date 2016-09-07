@@ -155,8 +155,10 @@ class MarkovRandomField:
                 n_in = hist[peak_idx - win_width:peak_idx + win_width].sum()
                 self._debug('win_w=%i, perc_in=%.0f, n_in=%.0f' % (win_width, perc_in, n_in), True)
 
-            idx_start = bins[peak_idx - win_width]
-            idx_end = bins[peak_idx + win_width]
+            start_id = max(0, peak_idx - win_width)
+            idx_start = bins[start_id]
+            end_id = min(peak_idx + win_width, len(bins) - 1)
+            idx_end = bins[end_id]
             inners_m = np.logical_and(ints > idx_start, ints < idx_end)
 
             inners = ints[np.nonzero(inners_m)]
